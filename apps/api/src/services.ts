@@ -58,11 +58,17 @@ function appendOutbox(aggregateId: string, aggregateType: OutboxMessage['aggrega
 }
 function scope<T extends { studyId: string }>(items: T[], studyId?: string) { return items.filter((item) => !studyId || item.studyId === studyId); }
 function expectedRecords(studyId: string, type: ExportJob['type']) {
-  const subjectsInStudy = subjects.filter((item) => item.studyId === studyId);
-  const eventCount = adverseEvents.length;
-  const queryCount = queries.length;
-  const batchRows = dataBatches.reduce((total, batch) => total + batch.acceptedRows, 0);
   const study = studyFor(studyId);
+  // Estimates the planned size of a study-scoped research snapshot: every input
+  // must be locked to the target study so events, queries and batches belonging
+  // to other studies never inflate this export's records.
+  const subjectsInStudy = scope(subjects, studyId);
+  const eventsInStudy = scope(adverseEvents, studyId);
+  const queriesInStudy = scope(queries, studyId);
+  const batchesInStudy = scope(dataBatches, studyId);
+  const eventCount = eventsInStudy.length;
+  const queryCount = queriesInStudy.length;
+  const batchRows = batchesInStudy.reduce((total, batch) => total + batch.acceptedRows, 0);
   const typeWeights: Record<ExportJob['type'], number> = {
     SDTM: 18,
     SAFETY: 11,
@@ -186,9 +192,13 @@ function transitionExport(exportId: string, generation: string, status: ExportJo
   appendOutbox(job.id, 'EXPORT_JOB', `EXPORT_${status}`, attempt.attempt, { exportId, attempt: attempt.attempt, records, progress, error: error ?? null });
 }
 function scheduleExportAttempt(job: ExportJob, attempt: ExportAttempt) {
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 25, Math.ceil(job.records * 0.25)), 120);
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 70, Math.ceil(job.records * 0.7)), 420);
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'COMPLETED', 100, job.records), 900);
+  // Freeze the study-scoped estimate for the whole attempt. Progress ticks only
+  // advance progress; records must stay the planned total so the COMPLETED
+  // callback never shrinks (or recomputes globally) the initial estimate.
+  const plannedRecords = job.records;
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 25, plannedRecords), 120);
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 70, plannedRecords), 420);
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'COMPLETED', 100, plannedRecords), 900);
 }
 
 export function createExport(studyId: string, type: ExportJob['type'], requestedBy = 'system') {
