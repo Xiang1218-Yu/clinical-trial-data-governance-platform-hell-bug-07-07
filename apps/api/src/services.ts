@@ -59,9 +59,9 @@ function appendOutbox(aggregateId: string, aggregateType: OutboxMessage['aggrega
 function scope<T extends { studyId: string }>(items: T[], studyId?: string) { return items.filter((item) => !studyId || item.studyId === studyId); }
 function expectedRecords(studyId: string, type: ExportJob['type']) {
   const subjectsInStudy = subjects.filter((item) => item.studyId === studyId);
-  const eventCount = adverseEvents.length;
-  const queryCount = queries.length;
-  const batchRows = dataBatches.reduce((total, batch) => total + batch.acceptedRows, 0);
+  const eventCount = adverseEvents.filter((item) => item.studyId === studyId).length;
+  const queryCount = queries.filter((item) => item.studyId === studyId).length;
+  const batchRows = dataBatches.filter((item) => item.studyId === studyId).reduce((total, batch) => total + batch.acceptedRows, 0);
   const study = studyFor(studyId);
   const typeWeights: Record<ExportJob['type'], number> = {
     SDTM: 18,
@@ -186,9 +186,10 @@ function transitionExport(exportId: string, generation: string, status: ExportJo
   appendOutbox(job.id, 'EXPORT_JOB', `EXPORT_${status}`, attempt.attempt, { exportId, attempt: attempt.attempt, records, progress, error: error ?? null });
 }
 function scheduleExportAttempt(job: ExportJob, attempt: ExportAttempt) {
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 25, Math.ceil(job.records * 0.25)), 120);
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 70, Math.ceil(job.records * 0.7)), 420);
-  setTimeout(() => transitionExport(job.id, attempt.generation, 'COMPLETED', 100, job.records), 900);
+  const plannedRecords = attempt.records;
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 25, Math.ceil(plannedRecords * 0.25)), 120);
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'RUNNING', 70, Math.ceil(plannedRecords * 0.7)), 420);
+  setTimeout(() => transitionExport(job.id, attempt.generation, 'COMPLETED', 100, plannedRecords), 900);
 }
 
 export function createExport(studyId: string, type: ExportJob['type'], requestedBy = 'system') {
